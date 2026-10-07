@@ -1,9 +1,28 @@
 """Stream a MySQL dump into SQLite.
-parameters, so MySQL's backslash escaping never reaches SQLite's parser."""
+
+Values are parsed and inserted as parameters, so MySQL's backslash escaping
+never reaches SQLite's parser.
+
+Usage:
+    python3 tools/mysql2sqlite.py [dump.sql] [out.db]
+
+Defaults: looks for magist_dump.sql in the repo root, then ~/Downloads;
+writes magist.db into the repo root.
+"""
 import re, sqlite3, sys, os
 
-SRC = os.path.expanduser("~/Downloads/magist_dump.sql")
-DST = "/private/tmp/claude-501/-Users-leonardobornhausser-Projects-git/c8af520f-d611-4da6-af19-4114dd85f597/scratchpad/magist.db"
+ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
+def default_src():
+    for c in (os.path.join(ROOT, "magist_dump.sql"),
+              os.path.expanduser("~/Downloads/magist_dump.sql")):
+        if os.path.exists(c):
+            return c
+    sys.exit("magist_dump.sql not found — pass the path as the first argument.")
+
+SRC = sys.argv[1] if len(sys.argv) > 1 else default_src()
+DST = sys.argv[2] if len(sys.argv) > 2 else os.path.join(ROOT, "magist.db")
+print(f"reading  {SRC}\nwriting  {DST}")
 if os.path.exists(DST): os.remove(DST)
 db = sqlite3.connect(DST)
 db.execute("PRAGMA journal_mode=OFF"); db.execute("PRAGMA synchronous=OFF")
@@ -79,6 +98,24 @@ with open(SRC, encoding='utf-8', errors='replace') as f:
             rows = [r for r in rows if len(r) == len(cols)]
             db.executemany(f'INSERT INTO "{t}" VALUES ({",".join("?"*len(cols))})', rows)
             total += len(rows)
+db.commit()
+
+# Indexes: the dump's KEY/CONSTRAINT lines are dropped during conversion, and
+# without these the customer -> geo join in 04 takes minutes instead of seconds.
+for ddl in (
+    "CREATE INDEX IF NOT EXISTS ix_oi_product ON order_items(product_id)",
+    "CREATE INDEX IF NOT EXISTS ix_oi_order   ON order_items(order_id)",
+    "CREATE INDEX IF NOT EXISTS ix_p_id       ON products(product_id)",
+    "CREATE INDEX IF NOT EXISTS ix_pc_name    ON product_category_name_translation(product_category_name)",
+    "CREATE INDEX IF NOT EXISTS ix_o_id       ON orders(order_id)",
+    "CREATE INDEX IF NOT EXISTS ix_o_cust     ON orders(customer_id)",
+    "CREATE INDEX IF NOT EXISTS ix_c_id       ON customers(customer_id)",
+    "CREATE INDEX IF NOT EXISTS ix_c_zip      ON customers(customer_zip_code_prefix)",
+    "CREATE INDEX IF NOT EXISTS ix_g_zip      ON geo(zip_code_prefix)",
+    "CREATE INDEX IF NOT EXISTS ix_r_order    ON order_reviews(order_id)",
+    "CREATE INDEX IF NOT EXISTS ix_pay_order  ON order_payments(order_id)",
+):
+    db.execute(ddl)
 db.commit()
 print("rows inserted:", total)
 for (t,) in db.execute("SELECT name FROM sqlite_master WHERE type='table' ORDER BY name"):
