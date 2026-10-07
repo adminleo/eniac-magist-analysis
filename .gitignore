@@ -1,0 +1,8 @@
+# Daten werden NICHT versioniert (Bootcamp-Datensatz, 65 MB)
+*.sql.gz
+magist_dump.sql
+data/
+*.db
+*.sqlite
+__pycache__/
+.DS_Store
