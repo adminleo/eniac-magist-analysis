@@ -34,6 +34,7 @@ Two objections had to be settled with evidence:
 | Does freight hurt margin? | Freight is 47 % of value under R$50 but only **3.8 %** above R$1,000 | ✅ |
 
 Full write-up with sources: **[findings/FINDINGS.md](findings/FINDINGS.md)**
+Team onboarding — how to run it and how the argument is built: **[TEAM-GUIDE.md](TEAM-GUIDE.md)**
 
 ## Repository layout
 
