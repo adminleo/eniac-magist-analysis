@@ -100,3 +100,24 @@ boundaries, and it hands the head of Eniac a concrete next step.
 - Expect the question *"why not just test flagship hardware too?"* Answer: 203
   items in `computers` over two years means we would be the experiment, with our
   brand carrying the risk.
+
+---
+
+## The built deck
+
+`magist-decision.pptx` in this folder is the outline above, built out: 7 slides,
+3 native charts, speaker notes on every slide.
+
+**To use it in Google Slides** (the brief asks for collaborative editing):
+upload the file to Google Drive, right-click it → *Open with* → *Google Slides*,
+then *File → Save as Google Slides*. Charts stay editable, notes come across.
+
+`build-deck.js` regenerates the file:
+
+```bash
+npm install pptxgenjs jszip
+node build-deck.js
+```
+
+Edit the data arrays in that script rather than the slides by hand, so the deck
+and the queries can't drift apart.
