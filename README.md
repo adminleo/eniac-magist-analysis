@@ -42,6 +42,7 @@ Team onboarding — how to run it and how the argument is built: **[TEAM-GUIDE.m
 sql/        Six analysis scripts, MySQL dialect — this is what runs in Workbench
 findings/   FINDINGS.md (the argument) + results/ (CSV output of every query)
 presentation/  Slide-by-slide script for the 4-minute delivery
+challenge/  A separate interview-style SQL exercise on the same database
 tools/      Reproducibility: dump → SQLite converter and a query runner
 ```
 
@@ -69,6 +70,17 @@ python3 tools/run_queries.py           # runs sql/*.sql, writes findings/results
 reproduces MySQL semantics where they differ — most importantly
 `TIMESTAMPDIFF(DAY, …)`, which returns **whole, truncated days**. Getting that
 wrong shifts the headline delivery figure by half a day.
+
+## A separate exercise on the same data
+
+`challenge/` holds an interview-style SQL challenge — review scores by state,
+and the same KPI wrapped in a stored procedure — kept apart from the Eniac
+argument because it answers nobody's business question. Two results from it are
+worth more than the answers themselves: most matches for "ótimo" are carried by
+the column's accent-insensitive collation rather than by the LIKE pattern, and
+56 % of reviewers write no text at all yet average 4.38 stars, which inflates
+every keyword-sentiment comparison built on this table. Details:
+**[challenge/README.md](challenge/README.md)**.
 
 ## Limitations
 
