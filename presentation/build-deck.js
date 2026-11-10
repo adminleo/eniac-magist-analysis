@@ -71,8 +71,8 @@ const chartBase = {
 };
 
 /* ================= 1 — title ================= */
-let s = pres.addSlide({ masterName: "DARK", sectionTitle: "Decision" });
 pres.addSection({ title: "Decision" });
+let s = pres.addSlide({ masterName: "DARK", sectionTitle: "Decision" });
 s.addText("Brazil: sign with Magist?", { x: 0.55, y: 1.72, w: 8.6, h: 1.0,
   fontSize: 40, bold: true, color: WHITE, isTextBox: true, margin: 0 });
 s.addText("Two objections. 99,441 orders of their data. One recommendation.",
@@ -211,9 +211,42 @@ s.addText("It is the one question the data cannot answer — and it is the one t
   { x: 0.55, y: 4.15, w: 8.4, h: 0.4, fontSize: 13, color: WHITE, bold: true, isTextBox: true, margin: 0 });
 s.addNotes("Ending on the open question is deliberate: it shows the analysis knows its own boundaries and hands the head of Eniac a concrete next step.");
 
+/* Write the theme's colours and name into the generated deck.
+   pptxgenjs cannot set theme colours itself, so until this runs every scheme
+   colour resolves to Office's stock palette. Self-contained on purpose: the
+   deck has to rebuild on any machine with `npm install`. */
+async function applyTheme(file, theme) {
+  const JSZip = require("jszip");
+  const fs = require("fs/promises");
+  const zip = await JSZip.loadAsync(await fs.readFile(file));
+  const path = Object.keys(zip.files).find((f) => /ppt\/theme\/theme\d+\.xml$/.test(f));
+  if (!path) throw new Error("no theme part found in " + file);
+
+  let xml = await zip.file(path).async("string");
+  const esc = (s) => String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+
+  // <a:dk1><a:sysClr .../></a:dk1> and <a:accent1><a:srgbClr val="…"/></a:accent1>
+  for (const [slot, hex] of Object.entries(theme.colors)) {
+    const re = new RegExp(`(<a:${slot}>)[\\s\\S]*?(</a:${slot}>)`);
+    if (re.test(xml)) xml = xml.replace(re, `$1<a:srgbClr val="${hex.toUpperCase()}"/>$2`);
+  }
+  xml = xml.replace(/(<a:clrScheme name=")[^"]*(")/, `$1${esc(theme.name)}$2`);
+  xml = xml.replace(/(<a:latin typeface=")[^"]*("\/><a:ea)/, `$1${esc(theme.headFontFace)}$2`);
+
+  zip.file(path, xml);
+
+  // Repack without directory entries: a .pptx that carries them fails to open
+  // in cloud editors such as Google Slides, which is where this deck is used.
+  const out = new JSZip();
+  for (const name of Object.keys(zip.files)) {
+    if (zip.files[name].dir) continue;
+    out.file(name, await zip.file(name).async("nodebuffer"), { createFolders: false });
+  }
+  await fs.writeFile(file, await out.generateAsync({ type: "nodebuffer", compression: "DEFLATE" }));
+}
+
 (async () => {
   await pres.writeFile({ fileName: "magist-decision.pptx" });
-  const { applyTheme } = require("/Users/leonardobornhausser/Library/Application Support/Claude/local-agent-mode-sessions/skills-plugin/8052765b-aab8-4663-8370-b0752c1a5c11/3b6ab2e6-e965-4617-bd19-354ff93e5f71/skills/pptx/scripts/apply_theme.js");
   await applyTheme("magist-decision.pptx", THEME);
   console.log("built magist-decision.pptx");
 })();
