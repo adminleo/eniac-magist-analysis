@@ -115,7 +115,10 @@ for ddl in (
     "CREATE INDEX IF NOT EXISTS ix_r_order    ON order_reviews(order_id)",
     "CREATE INDEX IF NOT EXISTS ix_pay_order  ON order_payments(order_id)",
 ):
-    db.execute(ddl)
+    try:
+        db.execute(ddl)          # index set is dataset-specific; skip what does not apply
+    except sqlite3.OperationalError:
+        pass
 db.commit()
 print("rows inserted:", total)
 for (t,) in db.execute("SELECT name FROM sqlite_master WHERE type='table' ORDER BY name"):
