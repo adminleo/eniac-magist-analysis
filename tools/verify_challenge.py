@@ -52,8 +52,16 @@ def ai_like(pattern, value, escape=None):
     return 1 if re.fullmatch(rx, fold(value), re.S) else 0
 
 
+def freight_pct(price, freight):
+    """The body of the stored FUNCTION in 04, so the SELECT that calls it runs."""
+    if price is None or price == 0:
+        return None
+    return round(100 * (freight or 0) / price, 2)
+
+
 def connect():
     db = sqlite3.connect(DB)
+    db.create_function("freight_pct", 2, freight_pct)
     db.create_function("like", 2, ai_like)
     db.create_function("like", 3, ai_like)
     db.execute("DROP TABLE IF EXISTS states")
@@ -66,6 +74,19 @@ def connect():
 def to_sqlite(sql):
     sql = re.sub(r'^\s*USE\s+\w+\s*;?\s*$', '', sql, flags=re.I | re.M)
     sql = re.sub(r"YEAR\(\s*([\w.]+)\s*\)", r"CAST(strftime('%Y', \1) AS INTEGER)", sql, flags=re.I)
+    # DATE_FORMAT(x, '%Y-%m') is a prefix of the ISO timestamp these columns hold
+    sql = re.sub(r"DATE_FORMAT\(\s*([\w.]+)\s*,\s*'%Y-%m'\s*\)", r"substr(\1,1,7)", sql, flags=re.I)
+    sql = re.sub(r"DATE_FORMAT\(\s*([\w.]+)\s*,\s*'%Y'\s*\)", r"substr(\1,1,4)", sql, flags=re.I)
+    # MySQL truncates TIMESTAMPDIFF(DAY,…) to whole days; julianday does not
+    sql = re.sub(r"TIMESTAMPDIFF\(\s*DAY\s*,\s*([\w.]+)\s*,\s*([\w.]+)\s*\)",
+                 r"CAST(julianday(\2) - julianday(\1) AS INTEGER)", sql, flags=re.I)
+    sql = re.sub(r"([\w.]+)\s*\+\s*INTERVAL\s+1\s+MONTH", r"date(\1,'+1 month')", sql, flags=re.I)
+    sql = re.sub(r"\bDATE\(\s*('\d{4}-\d{2}-\d{2}')\s*\)", r"\1", sql, flags=re.I)
+    sql = re.sub(r"CREATE\s+TEMPORARY\s+TABLE", "CREATE TEMP TABLE", sql, flags=re.I)
+    sql = re.sub(r"DROP\s+TEMPORARY\s+TABLE", "DROP TABLE", sql, flags=re.I)
+    # ALTER TABLE t ADD INDEX (c) has no SQLite form; CREATE INDEX is the same intent
+    sql = re.sub(r"ALTER\s+TABLE\s+(\w+)\s+ADD\s+INDEX\s*\(\s*(\w+)\s*\)",
+                 r"CREATE INDEX IF NOT EXISTS ix_\1_\2 ON \1(\2)", sql, flags=re.I)
     while True:                                    # CONCAT(a,b,c) -> (a || b || c)
         i = sql.upper().find("CONCAT(")
         if i == -1:
@@ -90,6 +111,20 @@ def to_sqlite(sql):
         parts.append(cur.strip())
         sql = sql[:i] + '(' + ' || '.join(parts) + ')' + sql[j:]
     return sql
+
+
+def strip_routines(text):
+    """Remove DELIMITER $$ … DELIMITER ; regions and the CALL/@var lines.
+
+    SQLite has no stored routines, and a BEGIN … END body is full of
+    semicolons that are not statement terminators — feeding it to the splitter
+    produces fragments, not statements. The bodies are verified separately as
+    parameterised queries (see PROCEDURE_BODY and FUNCTION_BODY).
+    """
+    text = re.sub(r"DELIMITER\s+\$\$.*?DELIMITER\s*;", "", text, flags=re.S | re.I)
+    text = re.sub(r"^\s*(DROP\s+(PROCEDURE|FUNCTION)|CALL)\b[^;]*;", "", text, flags=re.I | re.M)
+    text = re.sub(r"^\s*SELECT\s+@[^;]*;", "", text, flags=re.I | re.M)
+    return text
 
 
 def split_statements(text):
@@ -173,18 +208,22 @@ def main():
     db = connect()
     fails = 0
 
-    print("== challenge/01_reviews_by_state.sql")
-    text = open(os.path.join(CH, "01_reviews_by_state.sql")).read()
-    for stmt in split_statements(text):
-        if not re.sub(r'(--[^\n]*|\s)', '', stmt):
-            continue
-        print(f"\n   {label_of(stmt)}")
-        try:
-            cur = db.execute(to_sqlite(stmt))
-            show(cur, cur.fetchall())
-        except Exception as e:
-            fails += 1
-            print(f"      FAIL: {e}")
+    for fn in ("01_reviews_by_state.sql", "03_window_functions.sql",
+               "04_ctes_maths_routines.sql"):
+        print(f"== challenge/{fn}")
+        text = strip_routines(open(os.path.join(CH, fn), encoding="utf-8").read())
+        for stmt in split_statements(text):
+            if not re.sub(r'(--[^\n]*|\s)', '', stmt):
+                continue
+            print(f"\n   {label_of(stmt)}")
+            try:
+                cur = db.execute(to_sqlite(stmt))
+                rows = cur.fetchall() if cur.description else []
+                show(cur, rows) if cur.description else print("      (no result set)")
+            except Exception as e:
+                fails += 1
+                print(f"      FAIL: {e}")
+        print()
 
     print("\n== challenge/02_kpi_procedure.sql — procedure body, one call per row")
     for st, cat, yr in CALLS:

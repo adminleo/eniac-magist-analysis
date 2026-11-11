@@ -1,8 +1,10 @@
-# Final SQL challenge — reviews by state, and a KPI as a procedure
+# SQL interview prep — on the Magist database
 
-Two questions adapted from a real technical interview, run against the same
-Magist database as the analysis in the parent directory, extended with a
-`states` lookup table so results can be reported by full state name.
+The Chapter 5 material, worked against the same Magist database as the analysis
+in the parent directory, extended with a `states` lookup table so results can
+be reported by full state name: the final challenge (reviews by state, and a
+KPI as a stored procedure), plus window functions, CTEs, SQL arithmetic and
+stored routines.
 
 Every number below was produced by the statements in this directory. To
 re-derive them:
@@ -16,6 +18,8 @@ python3 tools/verify_challenge.py
 | `00_states_table.sql` | the provided DDL, plus the check that makes the foreign key safe |
 | `01_reviews_by_state.sql` | the four review questions |
 | `02_kpi_procedure.sql` | `avg_review_score(state, category, year)` |
+| `03_window_functions.sql` | `PARTITION BY`, rank family, `LAG`, frames, top-N per group, `NTILE` |
+| `04_ctes_maths_routines.sql` | subquery vs CTE vs temp table, recursive date spine, arithmetic traps, a stored `FUNCTION` and an `OUT` procedure |
 
 ## The answers
 
@@ -86,3 +90,89 @@ The procedure returns the review count next to the score. With no matching
 orders the average is NULL and the count is 0, which is a real answer;
 `('Roraima','telephony',2018)` returns one single review, and a KPI built on
 one review should not be read as a trend by whatever dashboard calls this.
+
+
+---
+
+# Window functions, CTEs and routines
+
+## Two findings the parent analysis does not have
+
+**Supply outside São Paulo is three sellers deep.** Ranking sellers within
+their state and taking each one's share of state revenue:
+
+| state | sellers | top 3 = % of state revenue |
+|---|---:|---:|
+| Bahía | 20 | **89.0 %** |
+| Ceará | 13 | **84.0 %** |
+| Espirito Santo | 24 | **75.8 %** |
+| Rio de Janeiro | 176 | 37.6 % |
+| São Paulo | 1,849 | ~7 % |
+
+"Magist has 3,095 sellers" is the wrong number to reassure anyone with. In most
+states a handful of sellers *are* the supply, and losing one is a regional
+outage. It argues for the parent recommendation — enter through São Paulo and
+the Southeast — on a ground the parent analysis never raised.
+
+**The dataset has two month-shaped holes, for two different reasons.** A
+recursive CTE generates the 26-month calendar and the data is LEFT JOINed onto
+it, so a month with no orders arrives as an explicit zero instead of being
+absent:
+
+- **2016-11** has no rows in `orders` at all.
+- **2018-10** has four orders, all `canceled`. Cancellations carry no
+  `order_items` rows, so the month vanishes the moment a revenue query joins
+  line items — 25 months in `orders`, 24 after the join.
+
+`GROUP BY` cannot express that difference; both months are simply missing from
+its output, and a chart interpolates straight through them. It also explains why
+`orders` and `orders ⋈ order_items` disagree about how long the dataset is.
+
+## Three traps that return a plausible wrong answer
+
+**`LAST_VALUE` with the default frame returns the current row.** An `ORDER BY`
+inside `OVER()` brings `RANGE BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW` with
+it, so the "last value" is the last one *so far*:
+
+| ym | revenue | `LAST_VALUE(revenue) OVER (ORDER BY ym)` | …with the full frame |
+|---|---:|---:|---:|
+| 2016-09 | 134.97 | 134.97 | 838,576.64 |
+| 2016-10 | 40,325.11 | 40,325.11 | 838,576.64 |
+| 2016-12 | 10.90 | 10.90 | 838,576.64 |
+
+The third column is a copy of the second. It does not error and it does not look
+broken — it looks like data. `FIRST_VALUE` is unaffected, which is what makes it
+easy to miss: the pair appears to work and only one of them does.
+
+**`ROW_NUMBER` breaks ties arbitrarily.** 195 revenue values in this table are
+shared by more than one seller. Over 3,095 sellers, the maximum `ROW_NUMBER` is
+3,095, the maximum `RANK` 3,095, the maximum `DENSE_RANK` 2,766 — `RANK` skips
+329 positions to keep the row count honest, `DENSE_RANK` refuses to skip and
+stops 329 short. For "the top 10 sellers", `ROW_NUMBER` returns exactly ten rows
+and the excluded seller is whichever one the optimiser read second; the answer
+can change between runs with no change to the data.
+
+**`PARTITION BY` treats NULL as a group.** Seven of the 3,095 sellers have a zip
+prefix that geocodes to a NULL state. Without an inner join to `states` they
+form their own partition — a nameless region whose top seller holds 53.5 % of
+it — and a window function ranks the unknowns against each other and presents
+the result as a place.
+
+## On percentage change
+
+`LAG` makes month-over-month growth a one-liner, and the first rows of this
+series are: 2016-12 at **−100.0 %**, then 2017-01 at **+1,025,573.0 %**. The
+base is a single order worth R$10.90. SQL computes it happily; it means nothing.
+This is why the parent analysis drops the partial months, and this query is
+where the reason becomes visible rather than asserted.
+
+## On the arithmetic
+
+Freight is **47.1 %** of value on items under R$50 and **3.8 %** above R$1,000 —
+on a cheap item the shipping is half the product. Two notes that matter more
+than the figures: `SUM(freight)/SUM(price)` is not `AVG(freight/price)` (the
+first weights by value, the second weights every line equally, and they are
+routinely confused), and `NULLIF(denominator, 0)` is how a division stays
+portable — in MySQL `x/0` yields NULL or raises depending on whether the session
+has `ERROR_FOR_DIVISION_BY_ZERO` set, so unguarded division is a statement about
+a server setting rather than about the data. 383 order lines have zero freight.
